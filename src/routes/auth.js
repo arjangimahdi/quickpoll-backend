@@ -1,9 +1,39 @@
 const express = require("express");
 const router = express.Router();
+const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 const User = require("./../models/User");
+
+const JWT_SECRET = process.env.JWT_SECRET || "super_secret_poll_key_123";
+const ACCESS_EXPIRES_IN = process.env.JWT_ACCESS_EXPIRES_IN || "15m";
+const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function signAccessToken(userId) {
+    return jwt.sign({ userId }, JWT_SECRET, { expiresIn: ACCESS_EXPIRES_IN });
+}
+
+function createRefreshToken() {
+    return crypto.randomBytes(40).toString("hex");
+}
+
+function hashRefreshToken(plainToken) {
+    return crypto.createHash("sha256").update(plainToken).digest("hex");
+}
+
+async function saveRefreshToken(user, plainRefreshToken) {
+    user.refreshTokenHash = hashRefreshToken(plainRefreshToken);
+    user.refreshTokenExpiresAt = new Date(Date.now() + REFRESH_TTL_MS);
+    await user.save();
+}
+
+async function issueAuthTokens(user) {
+    const token = signAccessToken(user._id);
+    const refreshToken = createRefreshToken();
+    await saveRefreshToken(user, refreshToken);
+    return { token, refreshToken };
+}
 
 router.post("/register", async (req, res) => {
     try {
@@ -24,10 +54,11 @@ router.post("/register", async (req, res) => {
         });
         await newUser.save();
 
-        const token = jwt.sign({ userId: newUser._id }, process.env.JWT_SECRET || "super_secret_poll_key_123");
+        const { token, refreshToken } = await issueAuthTokens(newUser);
 
         res.status(201).json({
             token,
+            refreshToken,
             user: { id: newUser._id, username: newUser.username, email: newUser.email },
         });
     } catch (error) {
@@ -50,17 +81,43 @@ router.post("/login", async (req, res) => {
             return res.status(400).json({ message: "Invalid credentials" });
         }
 
-        const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET || "super_secret_poll_key_123", {
-            expiresIn: "7d",
-        });
+        const { token, refreshToken } = await issueAuthTokens(user);
 
         res.json({
             token,
+            refreshToken,
             user: { id: user._id, username: user.username, email: user.email },
         });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server error during login" });
+    }
+});
+
+router.post("/refresh", async (req, res) => {
+    try {
+        const { refreshToken } = req.body;
+
+        if (!refreshToken) {
+            return res.status(401).json({ message: "Refresh token required" });
+        }
+
+        const refreshTokenHash = hashRefreshToken(refreshToken);
+        const user = await User.findOne({
+            refreshTokenHash,
+            refreshTokenExpiresAt: { $gt: new Date() },
+        });
+
+        if (!user) {
+            return res.status(401).json({ message: "Invalid or expired refresh token" });
+        }
+
+        const tokens = await issueAuthTokens(user);
+
+        res.json(tokens);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error during token refresh" });
     }
 });
 
