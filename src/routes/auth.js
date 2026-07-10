@@ -7,7 +7,7 @@ const jwt = require("jsonwebtoken");
 const User = require("./../models/User");
 
 const JWT_SECRET = process.env.JWT_SECRET || "super_secret_poll_key_123";
-const ACCESS_EXPIRES_IN = process.env.JWT_ACCESS_EXPIRES_IN || "15m";
+const ACCESS_EXPIRES_IN = process.env.JWT_ACCESS_EXPIRES_IN || "1d";
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function signAccessToken(userId) {

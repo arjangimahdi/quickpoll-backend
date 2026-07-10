@@ -55,7 +55,10 @@ router.get("/:id", async (req, res) => {
             return res.status(404).json({ message: "Poll not found" });
         }
 
-        res.json(poll);
+        const voterIp = req.headers["x-real-ip"] || req.socket.remoteAddress;
+        const myVote = poll.voters.find((vote) => vote.voterId === voterIp);
+
+        res.json({ ...poll.toObject(), myVote });
     } catch (error) {
         console.error(error);
 
@@ -83,19 +86,25 @@ router.post("/:id/vote", async (req, res) => {
             return res.status(404).json({ message: "Poll not found" });
         }
 
-        // 3. Prevent Double Voting: Check if this IP address has already voted
-        if (currentPoll.voters.includes(voterIp)) {
+        if (!currentPoll.isActive) {
+            return res.status(400).json({ message: "This poll is closed." });
+        }
+
+        if (currentPoll.expiresAt && new Date(currentPoll.expiresAt) < new Date()) {
+            return res.status(400).json({ message: "This poll has expired." });
+        }
+
+        const hasVoted = currentPoll.voters.some((voter) => voter.voterId === voterIp);
+        if (hasVoted) {
             return res.status(400).json({ message: "You have already voted on this poll!" });
         }
 
-        // 4. Validate option choice
         if (optionIndex === undefined || optionIndex < 0 || optionIndex >= currentPoll.options.length) {
             return res.status(400).json({ message: "Invalid poll option selected" });
         }
 
-        // 5. Update data: Increment the specific option vote count & register the voter's IP
         currentPoll.options[optionIndex].votes += 1;
-        currentPoll.voters.push(voterIp);
+        currentPoll.voters.push({ voterId: voterIp, optionIndex });
 
         // Save the updated document back to MongoDB
         await currentPoll.save();
