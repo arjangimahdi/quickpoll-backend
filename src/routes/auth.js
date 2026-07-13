@@ -6,9 +6,11 @@ const jwt = require("jsonwebtoken");
 
 const User = require("./../models/User");
 
+const protect = require("./authMiddleware");
+
 const JWT_SECRET = process.env.JWT_SECRET || "super_secret_poll_key_123";
 const ACCESS_EXPIRES_IN = process.env.JWT_ACCESS_EXPIRES_IN || "1d";
-const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const REFRESH_TTL_MS = process.env.JWT_REFRESH_EXPIRES_IN_MS || 7 * 24 * 60 * 60 * 1000;
 
 function signAccessToken(userId) {
     return jwt.sign({ userId }, JWT_SECRET, { expiresIn: ACCESS_EXPIRES_IN });
@@ -24,7 +26,7 @@ function hashRefreshToken(plainToken) {
 
 async function saveRefreshToken(user, plainRefreshToken) {
     user.refreshTokenHash = hashRefreshToken(plainRefreshToken);
-    user.refreshTokenExpiresAt = new Date(Date.now() + REFRESH_TTL_MS);
+    user.refreshTokenExpiresAt = new Date(Date.now() + Number(REFRESH_TTL_MS));
     await user.save();
 }
 
@@ -118,6 +120,22 @@ router.post("/refresh", async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server error during token refresh" });
+    }
+});
+
+router.post("/logout", protect, async (req, res) => {
+    try {
+        const user = await User.findByIdAndUpdate(req.user.userId, {
+            $unset: {
+                refreshTokenExpiresAt: 1,
+                refreshTokenHash: 1,
+            },
+        });
+
+        res.json({ message: "Logged out" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error during logout user" });
     }
 });
 
